@@ -19,9 +19,18 @@ STOPWORDS = {
 }
 POOL_SIZE = 50  # how many candidates each search contributes to the merge
 RRF_K = 60
+RERANK_POOL = 30  # how many candidates the reranker re-reads
+RERANKER_NAME = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-base")
+
+ENTITY_PATTERNS = [
+    ("small_finance_bank", r"\bsmall finance banks?\b|\bsfbs?\b"),
+    ("nbfc", r"\bnbfcs?\b|\bnon[- ]banking financial compan(?:y|ies)\b"),
+    ("commercial_bank", r"\bcommercial banks?\b"),
+]
 
 _model = None
 _bm25_index = None
+_reranker = None
 
 
 def get_model():
@@ -49,6 +58,13 @@ def tokenize(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOPWORDS]
 
 
+def detect_entity_types(question: str) -> list[str] | None:
+    """Find which lender types the question names. None means it names none."""
+    text = question.lower()
+    found = [name for name, pattern in ENTITY_PATTERNS if re.search(pattern, text)]
+    return found or None
+
+
 def embed_query(question: str) -> list[float]:
     return get_model().encode(QUERY_PREFIX + question, normalize_embeddings=True).tolist()
 
@@ -58,23 +74,39 @@ def get_bm25_index():
     global _bm25_index
     if _bm25_index is None:
         with SessionLocal() as session:
-            rows = session.execute(select(Chunk.id, Chunk.text).order_by(Chunk.id)).all()
+            rows = session.execute(
+                select(Chunk.id, Chunk.text, Document.entity_type)
+                .join(Document, Chunk.document_id == Document.id)
+                .order_by(Chunk.id)
+            ).all()
         ids = [row[0] for row in rows]
-        _bm25_index = (ids, BM25Okapi([tokenize(row[1]) for row in rows]))
+        entity_of = [row[2] for row in rows]
+        bm25 = BM25Okapi([tokenize(row[1]) for row in rows])
+        _bm25_index = (ids, entity_of, bm25)
     return _bm25_index
 
 
-def vector_ranking(vector: list[float], k: int) -> list[int]:
+def vector_ranking(vector: list[float], k: int, entity_types=None) -> list[int]:
     with SessionLocal() as session:
         distance = Chunk.embedding.cosine_distance(vector)
-        return list(session.scalars(select(Chunk.id).order_by(distance).limit(k)))
+        query = select(Chunk.id).join(Document, Chunk.document_id == Document.id)
+        if entity_types:
+            query = query.where(Document.entity_type.in_(entity_types))
+        return list(session.scalars(query.order_by(distance).limit(k)))
 
 
-def bm25_ranking(question: str, k: int) -> list[tuple[int, float]]:
-    ids, bm25 = get_bm25_index()
+def bm25_ranking(question: str, k: int, entity_types=None) -> list[tuple[int, float]]:
+    ids, entity_of, bm25 = get_bm25_index()
     scores = bm25.get_scores(tokenize(question))
-    best = sorted(range(len(ids)), key=lambda i: scores[i], reverse=True)[:k]
-    return [(ids[i], float(scores[i])) for i in best if scores[i] > 0]
+    order = sorted(range(len(ids)), key=lambda i: scores[i], reverse=True)
+    result = []
+    for i in order:
+        if scores[i] <= 0 or len(result) == k:
+            break
+        if entity_types and entity_of[i] not in entity_types:
+            continue
+        result.append((ids[i], float(scores[i])))
+    return result
 
 
 def fuse(rankings: list[list[int]], k: int = RRF_K) -> list[tuple[int, float]]:
@@ -115,11 +147,6 @@ def load_passages(chunk_ids: list[int], vector: list[float], scores: dict) -> li
             )
         return passages
 
-RERANK_POOL = 30  # how many candidates the reranker re-reads
-RERANKER_NAME = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-base")
-
-_reranker = None
-
 
 def get_reranker():
     global _reranker
@@ -128,6 +155,7 @@ def get_reranker():
 
         _reranker = CrossEncoder(RERANKER_NAME, max_length=512)
     return _reranker
+
 
 def rerank(question: str, passages: list[Passage], top_k: int) -> list[Passage]:
     """Re-score each (question, passage) pair together and keep the best top_k."""
@@ -140,20 +168,33 @@ def rerank(question: str, passages: list[Passage], top_k: int) -> list[Passage]:
         passage.score = float(score)
     return [passage for passage, _ in ranked]
 
-def search(question: str, top_k: int = 5, mode: str = "rerank") -> list[Passage]:
-    """mode is 'vector', 'bm25', 'hybrid' or 'rerank'."""
+
+def search(
+    question: str,
+    top_k: int = 5,
+    mode: str = "rerank",
+    entity_types: list[str] | None = None,
+    auto_filter: bool = True,
+) -> list[Passage]:
+    """mode is 'vector', 'bm25', 'hybrid' or 'rerank'.
+
+    entity_types limits the search to some lender types. If it is not given and
+    auto_filter is True, the lender types are read from the question itself.
+    """
     if mode not in ("vector", "bm25", "hybrid", "rerank"):
         raise ValueError("mode must be 'vector', 'bm25', 'hybrid' or 'rerank'")
+    if entity_types is None and auto_filter:
+        entity_types = detect_entity_types(question)
     vector = embed_query(question)
 
     if mode == "vector":
-        ids, scores = vector_ranking(vector, top_k), {}
+        ids, scores = vector_ranking(vector, top_k, entity_types), {}
     elif mode == "bm25":
-        ranked = bm25_ranking(question, top_k)
+        ranked = bm25_ranking(question, top_k, entity_types)
         ids, scores = [cid for cid, _ in ranked], dict(ranked)
     else:
-        keyword_ids = [cid for cid, _ in bm25_ranking(question, POOL_SIZE)]
-        fused = fuse([vector_ranking(vector, POOL_SIZE), keyword_ids])
+        keyword_ids = [cid for cid, _ in bm25_ranking(question, POOL_SIZE, entity_types)]
+        fused = fuse([vector_ranking(vector, POOL_SIZE, entity_types), keyword_ids])
         fused = fused[:top_k] if mode == "hybrid" else fused[:RERANK_POOL]
         ids, scores = [cid for cid, _ in fused], dict(fused)
 
