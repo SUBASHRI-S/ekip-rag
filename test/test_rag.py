@@ -1,4 +1,4 @@
-from app.rag import build_prompt, format_pages
+from app.rag import build_prompt, clean_answer, extract_citations, format_pages
 from app.retrieval import Passage
 
 
@@ -20,3 +20,13 @@ def test_prompt_numbers_passages_and_contains_question():
     assert "[2] Source:" in prompt
     assert "pages 1-2" in prompt
     assert prompt.endswith("Question: What is KYC?\n\nAnswer:")
+
+
+def test_extract_citations_accepts_different_bracket_styles():
+    assert extract_citations("Yes [1][3].", 5) == [1, 3]
+    assert extract_citations("Yes \u30102\u3011 and [4, 5]", 5) == [2, 4, 5]
+    assert extract_citations("Effective [2025] only", 5) == []
+
+
+def test_clean_answer_normalises_citations_and_removes_bold():
+    assert clean_answer("The **limit** is 5%\u30101\u2020note\u3011.") == "The limit is 5%[1]."

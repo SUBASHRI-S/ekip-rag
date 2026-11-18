@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 from openai import APIError
@@ -44,6 +45,22 @@ def build_prompt(question: str, passages: list[Passage]) -> str:
     return "Passages:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}\n\nAnswer:"
 
 
+def extract_citations(answer: str, max_number: int) -> list[int]:
+    """Numbers of the passages an answer cites, in any bracket style the model uses."""
+    numbers = set()
+    for inside in re.findall(r"[\[【]([^\]】]*)[\]】]", answer):
+        for digits in re.findall(r"\d+", inside):
+            if 1 <= int(digits) <= max_number:
+                numbers.add(int(digits))
+    return sorted(numbers)
+
+
+def clean_answer(text: str) -> str:
+    """Rewrite citations like 【1†note】 as [1] and remove **bold** markers."""
+    text = text.replace("**", "")
+    return re.sub(r"【\s*(\d+)[^】]*】", r"[\1]", text)
+
+
 @dataclass
 class RagAnswer:
     question: str
@@ -55,7 +72,7 @@ class RagAnswer:
 def answer_question(question: str, top_k: int = 5) -> RagAnswer:
     passages = search(question, top_k=top_k)
     try:
-        text = generate(build_prompt(question, passages), system=SYSTEM_PROMPT).strip()
+        text = clean_answer(generate(build_prompt(question, passages), system=SYSTEM_PROMPT).strip())
     except APIError:
         text = LLM_DOWN  # the search still worked, so show the passages anyway
     answerable = text not in (NOT_FOUND, LLM_DOWN)
