@@ -19,7 +19,7 @@ STOPWORDS = {
 }
 POOL_SIZE = 50  # how many candidates each search contributes to the merge
 RRF_K = 60
-RERANK_POOL = 30  # how many candidates the reranker re-reads
+RERANK_POOL = int(os.environ.get("RERANK_POOL", "30"))  # how many candidates the reranker re-reads
 RERANKER_NAME = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-base")
 
 ENTITY_PATTERNS = [
