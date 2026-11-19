@@ -3,7 +3,6 @@ import os
 import sys
 import time
 from pathlib import Path
-
 from app.retrieval import search
 
 QUESTIONS = Path(os.environ.get("EVAL_QUESTIONS", "data/processed/eval_answerable.csv"))
@@ -104,6 +103,8 @@ def main():
                 "Hit@1 exact": share(ranks["exact"], n, 1),
                 "Hit@1 near": share(ranks["near"], n, 1),
                 "MRR near": mrr(ranks["near"], n),
+                "Hit@1 page": share(ranks["page"], n, 1),
+                "MRR page": mrr(ranks["page"], n),
                 "sec/q": round((time.time() - started) / n, 2),
             }
         )
@@ -115,7 +116,7 @@ def main():
             writer.writeheader()
             writer.writerows(data)
 
-    columns = ["R@5 exact", "R@5 near", "R@5 page", "Hit@1 exact", "Hit@1 near", "MRR near", "sec/q"]
+    columns = ["R@5 exact", "R@5 near", "R@5 page", "Hit@1 page", "MRR page", "Hit@1 near", "MRR near", "sec/q"]
     print()
     print(f"{'setting':26}" + "".join(f"{c:>12}" for c in columns))
     for r in summary:

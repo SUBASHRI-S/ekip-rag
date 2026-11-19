@@ -1,11 +1,12 @@
+import os
 from bisect import bisect_right
 from dataclasses import dataclass
 
 from transformers import AutoTokenizer
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
-CHUNK_TOKENS = 500
-OVERLAP_TOKENS = 100
+CHUNK_TOKENS = int(os.environ.get("CHUNK_TOKENS", "500"))
+OVERLAP_TOKENS = int(os.environ.get("OVERLAP_TOKENS", "100"))
 
 _tokenizer = None
 
