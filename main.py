@@ -1,10 +1,12 @@
-from typing import Literal
 import json
 from collections import Counter
+from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.db import SessionLocal
+from app.models import Conversation, Message
 from app.rag import answer_question, format_pages
 
 app = FastAPI(title="EKIP RAG")
@@ -14,9 +16,12 @@ class DocumentOut(BaseModel):
     name: str
     pages: int
 
+
 class ChatRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
     mode: Literal["hybrid", "rerank"] = "hybrid"
+    conversation_id: int | None = None
+
 
 class SourceOut(BaseModel):
     number: int
@@ -32,6 +37,14 @@ class ChatResponse(BaseModel):
     answer: str
     answerable: bool
     sources: list[SourceOut]
+    conversation_id: int
+    message_id: int
+    trace: dict
+
+
+class FeedbackRequest(BaseModel):
+    message_id: int
+    rating: Literal[1, -1]
 
 
 @app.get("/health")
@@ -63,4 +76,44 @@ def chat(request: ChatRequest):
         )
         for number, p in enumerate(result.passages, start=1)
     ]
-    return ChatResponse(answer=result.answer, answerable=result.answerable, sources=sources)
+
+    with SessionLocal() as session:
+        conversation = session.get(Conversation, request.conversation_id) if request.conversation_id else None
+        if conversation is None:
+            conversation = Conversation()
+            session.add(conversation)
+            session.flush()
+        session.add(Message(conversation_id=conversation.id, role="user", content=request.question))
+        reply = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=result.answer,
+            answerable=result.answerable,
+            mode=request.mode,
+            sources=[s.model_dump() for s in sources],
+            trace=result.trace,
+        )
+        session.add(reply)
+        session.flush()
+        conversation_id, message_id = conversation.id, reply.id
+        session.commit()
+
+    return ChatResponse(
+        answer=result.answer,
+        answerable=result.answerable,
+        sources=sources,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        trace=result.trace,
+    )
+
+
+@app.post("/feedback")
+def feedback(request: FeedbackRequest):
+    with SessionLocal() as session:
+        message = session.get(Message, request.message_id)
+        if message is None or message.role != "assistant":
+            raise HTTPException(status_code=404, detail="Message not found")
+        message.rating = request.rating
+        session.commit()
+    return {"status": "saved"}

@@ -1,10 +1,12 @@
+import os
+import time
 import re
 from dataclasses import dataclass
 
 from openai import APIError
 
 from app.llm import generate
-from app.retrieval import Passage, search
+from app.retrieval import Passage, detect_entity_types, search
 
 NOT_FOUND = "The documents do not contain enough information to answer this."
 LLM_DOWN = (
@@ -67,12 +69,40 @@ class RagAnswer:
     answer: str
     answerable: bool
     passages: list[Passage]
+    trace: dict
+
 
 def answer_question(question: str, top_k: int = 5, mode: str = "hybrid") -> RagAnswer:
+    started = time.perf_counter()
+    lender_filter = detect_entity_types(question)
     passages = search(question, top_k=top_k, mode=mode)
+    search_seconds = time.perf_counter() - started
+
+    llm_started = time.perf_counter()
     try:
         text = clean_answer(generate(build_prompt(question, passages), system=SYSTEM_PROMPT).strip())
     except APIError:
         text = LLM_DOWN  # the search still worked, so show the passages anyway
+    llm_seconds = time.perf_counter() - llm_started
+
+    trace = {
+        "mode": mode,
+        "lender_filter": lender_filter,
+        "search_seconds": round(search_seconds, 3),
+        "llm_seconds": round(llm_seconds, 3),
+        "total_seconds": round(time.perf_counter() - started, 3),
+        "llm_model": os.environ.get("LLM_MODEL"),
+        "retrieved": [
+            {
+                "rank": rank,
+                "chunk_id": p.chunk_id,
+                "score": round(p.score, 4),
+                "distance": round(p.distance, 4),
+            }
+            for rank, p in enumerate(passages, start=1)
+        ],
+    }
     answerable = text not in (NOT_FOUND, LLM_DOWN)
-    return RagAnswer(question=question, answer=text, answerable=answerable, passages=passages)
+    return RagAnswer(
+        question=question, answer=text, answerable=answerable, passages=passages, trace=trace
+    )
