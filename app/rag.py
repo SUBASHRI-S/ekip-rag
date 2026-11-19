@@ -68,9 +68,8 @@ class RagAnswer:
     answerable: bool
     passages: list[Passage]
 
-
-def answer_question(question: str, top_k: int = 5) -> RagAnswer:
-    passages = search(question, top_k=top_k)
+def answer_question(question: str, top_k: int = 5, mode: str = "hybrid") -> RagAnswer:
+    passages = search(question, top_k=top_k, mode=mode)
     try:
         text = clean_answer(generate(build_prompt(question, passages), system=SYSTEM_PROMPT).strip())
     except APIError:

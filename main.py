@@ -1,3 +1,4 @@
+from typing import Literal
 import json
 from collections import Counter
 
@@ -13,10 +14,9 @@ class DocumentOut(BaseModel):
     name: str
     pages: int
 
-
 class ChatRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
-
+    mode: Literal["hybrid", "rerank"] = "hybrid"
 
 class SourceOut(BaseModel):
     number: int
@@ -50,7 +50,7 @@ def list_documents():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    result = answer_question(request.question)
+    result = answer_question(request.question, mode=request.mode)
     sources = [
         SourceOut(
             number=number,

@@ -172,7 +172,7 @@ def rerank(question: str, passages: list[Passage], top_k: int) -> list[Passage]:
 def search(
     question: str,
     top_k: int = 5,
-    mode: str = "rerank",
+    mode: str = "hybrid",
     entity_types: list[str] | None = None,
     auto_filter: bool = True,
 ) -> list[Passage]:
