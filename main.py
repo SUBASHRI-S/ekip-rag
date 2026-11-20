@@ -1,11 +1,15 @@
 import json
+import os
 from collections import Counter
+from datetime import datetime
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from app.db import SessionLocal
+from app.llm import get_client
 from app.models import Conversation, Message
 from app.rag import answer_question, format_pages
 
@@ -45,6 +49,22 @@ class ChatResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     message_id: int
     rating: Literal[1, -1]
+
+
+class ConversationOut(BaseModel):
+    id: int
+    title: str
+    created_at: datetime
+
+
+class MessageOut(BaseModel):
+    message_id: int
+    role: str
+    content: str
+    answerable: bool | None = None
+    sources: list | None = None
+    trace: dict | None = None
+    rating: int | None = None
 
 
 @app.get("/health")
@@ -117,3 +137,66 @@ def feedback(request: FeedbackRequest):
         message.rating = request.rating
         session.commit()
     return {"status": "saved"}
+
+
+@app.get("/conversations", response_model=list[ConversationOut])
+def list_conversations():
+    with SessionLocal() as session:
+        conversations = session.scalars(
+            select(Conversation).order_by(Conversation.id.desc()).limit(30)
+        ).all()
+        return [
+            ConversationOut(
+                id=c.id,
+                title=next((m.content for m in c.messages if m.role == "user"), "(empty chat)")[:60],
+                created_at=c.created_at,
+            )
+            for c in conversations
+        ]
+
+
+@app.get("/conversations/{conversation_id}", response_model=list[MessageOut])
+def get_conversation(conversation_id: int):
+    with SessionLocal() as session:
+        conversation = session.get(Conversation, conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return [
+            MessageOut(
+                message_id=m.id,
+                role=m.role,
+                content=m.content,
+                answerable=m.answerable,
+                sources=m.sources,
+                trace=m.trace,
+                rating=m.rating,
+            )
+            for m in conversation.messages
+        ]
+
+
+@app.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: int):
+    with SessionLocal() as session:
+        conversation = session.get(Conversation, conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        session.delete(conversation)
+        session.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/transcribe")
+def transcribe(audio: UploadFile = File(...)):
+    data = audio.file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty recording")
+    try:
+        result = get_client().audio.transcriptions.create(
+            model=os.environ.get("STT_MODEL", "whisper-large-v3-turbo"),
+            file=(audio.filename or "voice.wav", data, audio.content_type or "audio/wav"),
+            language="en",
+        )
+    except Exception as error:  # the speech service can be busy, limited or missing the model
+        raise HTTPException(status_code=503, detail=f"Speech service unavailable: {error}")
+    return {"text": result.text.strip()}
