@@ -50,9 +50,20 @@ SYSTEM_PROMPT_GENERAL = (
     "3. When the passages come from more than one document, say which document each "
     "statement comes from, and point out where the documents agree or differ.\n"
     "4. Include every number, limit, condition and exception the passages give for the question.\n"
-    f'5. If the passages do not contain the answer, reply exactly: "{NOT_FOUND}"\n'
-    "6. Keep the answer short and in plain English."
+    "5. If the passages answer only part of the question, answer that part and say plainly "
+    "which part the passages do not cover.\n"
+    f'6. Only if the passages answer none of the question, reply exactly: "{NOT_FOUND}"\n'
+    "7. Keep the answer short and in plain English."
 )
+
+SPLIT_PROMPT = (
+    "Does the question below ask for two or more separate facts? If it does, rewrite it as "
+    "separate, self-contained short questions, one per line, at most three, with no numbering "
+    "or bullets. If it asks for only one thing, repeat it unchanged on one line. "
+    "Reply with only the questions.\n\nQuestion: {question}"
+)
+
+MULTI_PART = re.compile(r"\b(and|both|compare|comparison|difference|differ|versus|vs)\b", re.IGNORECASE)
 
 
 def format_pages(passage: Passage) -> str:
@@ -86,6 +97,35 @@ def clean_answer(text: str) -> str:
     return re.sub(r"【\s*(\d+)[^】]*】", r"[\1]", text)
 
 
+def needs_splitting(question: str) -> bool:
+    """A cheap check, so simple questions never cost an extra LLM call."""
+    return bool(MULTI_PART.search(question)) or question.count("?") > 1
+
+
+def split_question(question: str) -> list[str]:
+    """Break a multi-part question into up to three short questions."""
+    if not needs_splitting(question):
+        return [question]
+    try:
+        reply = generate(SPLIT_PROMPT.format(question=question)).strip()
+    except APIError:
+        return [question]
+    parts = [re.sub(r"^[\s\-*\d.)]+", "", line).strip() for line in reply.splitlines()]
+    parts = [p for p in parts if len(p) > 8][:3]
+    return parts or [question]
+
+
+def retrieve_for_parts(parts: list[str], top_k: int, mode: str, cid: int) -> list[Passage]:
+    """Search each part on its own and merge, without repeating a passage."""
+    merged, seen = [], set()
+    for part in parts:
+        for passage in search(part, top_k=3, mode=mode, collection_id=cid):
+            if passage.chunk_id not in seen:
+                seen.add(passage.chunk_id)
+                merged.append(passage)
+    return merged
+
+
 @dataclass
 class RagAnswer:
     question: str
@@ -102,10 +142,16 @@ def answer_question(
     cid = resolve_collection(collection_id)
     is_rbi = get_collection_name(cid) == DEFAULT_COLLECTION
     lender_filter = detect_entity_types(question) if is_rbi else None
+
+    parts, balanced = [question], False
     if is_rbi:
-        passages, balanced = search(question, top_k=top_k, mode=mode, collection_id=cid), False
+        passages = search(question, top_k=top_k, mode=mode, collection_id=cid)
     else:
-        passages, balanced = search_balanced(question, top_k=top_k, mode=mode, collection_id=cid)
+        parts = split_question(question)
+        if len(parts) > 1:
+            passages = retrieve_for_parts(parts, top_k, mode, cid)
+        else:
+            passages, balanced = search_balanced(question, top_k=top_k, mode=mode, collection_id=cid)
     search_seconds = time.perf_counter() - started
 
     llm_started = time.perf_counter()
@@ -119,6 +165,7 @@ def answer_question(
     trace = {
         "mode": mode,
         "collection_id": cid,
+        "sub_questions": parts if len(parts) > 1 else None,
         "balanced_across_documents": balanced,
         "lender_filter": lender_filter,
         "search_seconds": round(search_seconds, 3),

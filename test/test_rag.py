@@ -1,4 +1,4 @@
-from app.rag import build_prompt, clean_answer, extract_citations, format_pages
+from app.rag import build_prompt, clean_answer, extract_citations, format_pages, needs_splitting
 from app.retrieval import Passage
 
 
@@ -30,3 +30,10 @@ def test_extract_citations_accepts_different_bracket_styles():
 
 def test_clean_answer_normalises_citations_and_removes_bold():
     assert clean_answer("The **limit** is 5%\u30101\u2020note\u3011.") == "The limit is 5%[1]."
+
+
+def test_needs_splitting_spots_multi_part_questions():
+    assert needs_splitting("What is the time limit for X, and how soon must Y happen?")
+    assert needs_splitting("Compare the rules in the two documents")
+    assert needs_splitting("What is X? What is Y?")
+    assert not needs_splitting("How soon must a credit card account be closed?")
