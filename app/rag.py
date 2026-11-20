@@ -13,6 +13,7 @@ from app.retrieval import (
     get_collection_name,
     resolve_collection,
     search,
+    search_balanced,
 )
 
 NOT_FOUND = "The documents do not contain enough information to answer this."
@@ -101,7 +102,10 @@ def answer_question(
     cid = resolve_collection(collection_id)
     is_rbi = get_collection_name(cid) == DEFAULT_COLLECTION
     lender_filter = detect_entity_types(question) if is_rbi else None
-    passages = search(question, top_k=top_k, mode=mode, collection_id=cid)
+    if is_rbi:
+        passages, balanced = search(question, top_k=top_k, mode=mode, collection_id=cid), False
+    else:
+        passages, balanced = search_balanced(question, top_k=top_k, mode=mode, collection_id=cid)
     search_seconds = time.perf_counter() - started
 
     llm_started = time.perf_counter()
@@ -115,6 +119,7 @@ def answer_question(
     trace = {
         "mode": mode,
         "collection_id": cid,
+        "balanced_across_documents": balanced,
         "lender_filter": lender_filter,
         "search_seconds": round(search_seconds, 3),
         "llm_seconds": round(llm_seconds, 3),

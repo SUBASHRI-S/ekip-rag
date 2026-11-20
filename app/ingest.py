@@ -125,6 +125,14 @@ def ingest_rbi():
         )
         print(f"skip    {file_name}" if result is None else f"loaded  {file_name}: {result[1]} chunks", flush=True)
 
+def ingest_pdf_bytes(data: bytes, file_name: str, collection_name: str):
+    """Store a PDF that arrived as raw bytes (an upload). Returns (document_id, chunks) or None."""
+    file_name = Path(file_name).name  # never trust a path sent by a browser
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        pages = [(number, clean_page_text(page.get_text())) for number, page in enumerate(doc, start=1)]
+    title = Path(file_name).stem.replace("_", " ").replace("-", " ").strip()
+    return store_document(collection_name, file_name, pages, title=title)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Load documents into the database.")

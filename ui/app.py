@@ -4,13 +4,13 @@ import httpx
 import streamlit as st
 
 API_URL = "http://127.0.0.1:8000"
-EXAMPLES = [
+RBI_EXAMPLES = [
     "What is the maximum loan to value ratio for gold loans given by NBFCs?",
     "What is a lending service provider?",
     "Can an NBFC charge pre-payment penalties on microfinance loans?",
 ]
 
-st.set_page_config(page_title="RBI Directions Q&A", page_icon="📚", layout="wide")
+st.set_page_config(page_title="Ask your documents", page_icon="📚", layout="wide")
 st.markdown(
     "<style>.block-container {max-width: 980px; padding-top: 2rem;}</style>",
     unsafe_allow_html=True,
@@ -31,9 +31,15 @@ def api(method, path, timeout=60, **kwargs):
         response = httpx.request(method, f"{API_URL}{path}", timeout=timeout, **kwargs)
         response.raise_for_status()
         return response.json()
+    except httpx.HTTPStatusError as error:
+        try:
+            detail = error.response.json().get("detail", error)
+        except ValueError:
+            detail = error
+        st.error(f"The API said: {detail}")
     except httpx.HTTPError as error:
         st.error(f"The API did not answer: {error}")
-        return None
+    return None
 
 
 def new_chat():
@@ -77,9 +83,55 @@ def show_sources(sources):
             st.caption(f"{s['file_name']} | match distance {s['distance']}")
 
 
+collections = api("GET", "/collections") or []
+by_name = {c["name"]: c for c in collections}
+
 with st.sidebar:
-    st.title("📚 RBI Q&A")
+    st.title("📚 Ask your documents")
     st.button("➕ New chat", on_click=new_chat, use_container_width=True)
+
+    st.subheader("Collection")
+    if "next_collection" in st.session_state:  # set after an upload, before the box is drawn
+        st.session_state["collection_name"] = st.session_state.pop("next_collection")
+    names = [c["name"] for c in collections]
+    if names and st.session_state.get("collection_name") not in names:
+        st.session_state["collection_name"] = names[0]
+    selected_name = st.selectbox("Ask about", names, key="collection_name", label_visibility="collapsed") if names else None
+    selected = by_name.get(selected_name)
+    if selected:
+        with st.expander(f"📄 Documents ({len(selected['documents'])})"):
+            for doc in selected["documents"]:
+                st.caption(f"{doc['title']} · {doc['pages']} pages")
+        if not selected["read_only"]:
+            if st.button("🗑 Delete this collection", use_container_width=True):
+                if api("DELETE", f"/collections/{selected['id']}"):
+                    new_chat()
+                    st.rerun()
+
+    with st.expander("⬆️ Add your own PDFs"):
+        target = st.text_input("Collection name", value="My documents")
+        files = st.file_uploader(
+            "Choose PDF files (select several, or all files of a folder)",
+            type="pdf",
+            accept_multiple_files=True,
+        )
+        st.caption("Text PDFs only. Your documents' text is sent to the LLM provider with each question.")
+        if st.button("Add to collection", disabled=not files, use_container_width=True):
+            with st.spinner("Reading and indexing your documents. This can take a minute per file..."):
+                outcome = api(
+                    "POST", "/upload", timeout=900,
+                    data={"collection": target},
+                    files=[("files", (f.name, f.getvalue(), "application/pdf")) for f in files],
+                )
+            if outcome:
+                for item in outcome["results"]:
+                    (st.success if item["status"].startswith("added") else st.warning)(
+                        f"{item['file']}: {item['status']}"
+                    )
+                st.session_state["next_collection"] = outcome["collection"]
+                st.session_state["upload_done"] = True
+    if st.session_state.pop("upload_done", False):
+        st.rerun()
 
     st.subheader("Chats")
     for chat in api("GET", "/conversations") or []:
@@ -120,16 +172,19 @@ with st.sidebar:
         st.text_input("I heard (edit if needed):", key="voice_text")
         st.button("Ask this", on_click=ask_voice, use_container_width=True)
 
-st.title("RBI Directions Q&A")
-st.caption(
-    "Ask about lending, KYC and customer-protection rules for commercial banks, "
-    "NBFCs and small finance banks. Every answer cites the document and page."
-)
+st.title("Ask your documents")
+if selected:
+    st.caption(
+        f"Asking inside the collection **{selected['name']}**. "
+        "Every answer cites the document and page."
+    )
 
-if not st.session_state.messages:
+if not st.session_state.messages and selected and selected["read_only"]:
     st.markdown("#### Try one of these")
-    for number, text in enumerate(EXAMPLES):
+    for number, text in enumerate(RBI_EXAMPLES):
         st.button(text, key=f"example{number}", on_click=ask_example, args=(text,))
+elif not st.session_state.messages:
+    st.info("Ask a question about the documents in this collection.")
 
 for index, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
@@ -150,9 +205,9 @@ for index, message in enumerate(st.session_state.messages):
             columns[0].button("👍", key=f"up{index}", on_click=rate, args=(index, 1))
             columns[1].button("👎", key=f"down{index}", on_click=rate, args=(index, -1))
 
-typed = st.chat_input("Ask a question about the RBI Directions")
+typed = st.chat_input("Ask a question about the selected collection")
 question = st.session_state.pop("pending_question", None) or typed
-if question:
+if question and selected:
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
@@ -164,6 +219,7 @@ if question:
                     "question": question,
                     "mode": mode,
                     "conversation_id": st.session_state.conversation_id,
+                    "collection_id": selected["id"],
                 },
             )
     if data is None:
@@ -181,4 +237,3 @@ if question:
         }
     )
     st.rerun()
-    

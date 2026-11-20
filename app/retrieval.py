@@ -261,3 +261,37 @@ def search(
     if mode == "rerank":
         passages = rerank(question, passages, top_k)
     return passages
+
+def collection_documents(collection_id) -> list[int]:
+    with SessionLocal() as session:
+        return list(
+            session.scalars(
+                select(Document.id).where(in_collection(collection_id)).order_by(Document.id)
+            )
+        )
+
+
+def search_balanced(
+    question: str,
+    top_k: int = 5,
+    mode: str = "hybrid",
+    collection_id: int | None = None,
+    max_documents: int = 4,
+):
+    """For a collection of 2 to 4 documents, take the best passages from EACH document.
+
+    Returns (passages, balanced). With one document, or more than max_documents,
+    it falls back to the normal search.
+    """
+    cid = resolve_collection(collection_id)
+    document_ids = collection_documents(cid)
+    if not 2 <= len(document_ids) <= max_documents:
+        return search(question, top_k=top_k, mode=mode, collection_id=cid), False
+    per_document = max(2, -(-top_k // len(document_ids)))  # rounds up
+    passages = []
+    for document_id in document_ids:
+        passages.extend(
+            search(question, top_k=per_document, mode=mode, collection_id=cid, document_ids=[document_id])
+        )
+    passages.sort(key=lambda p: p.distance)
+    return passages, True
