@@ -59,7 +59,9 @@ SYSTEM_PROMPT_GENERAL = (
 SPLIT_PROMPT = (
     "Does the question below ask for two or more separate facts? If it does, rewrite it as "
     "separate, self-contained short questions, one per line, at most three, with no numbering "
-    "or bullets. If it asks for only one thing, repeat it unchanged on one line. "
+    "or bullets. Keep every name, abbreviation and technical term from the original question "
+    "in the part where it belongs (for example NBFC, SPE, credit card). "
+    "If it asks for only one thing, repeat it unchanged on one line. "
     "Reply with only the questions.\n\nQuestion: {question}"
 )
 
@@ -115,15 +117,16 @@ def split_question(question: str) -> list[str]:
     return parts or [question]
 
 
-def retrieve_for_parts(parts: list[str], top_k: int, mode: str, cid: int) -> list[Passage]:
-    """Search each part on its own and merge, without repeating a passage."""
+def retrieve_for_parts(parts: list[str], mode: str, cid: int, per_part: int = 5, limit: int = 12) -> list[Passage]:
+    """Search each part on its own, then merge best-first across parts without repeats."""
+    lists = [search(part, top_k=per_part, mode=mode, collection_id=cid) for part in parts]
     merged, seen = [], set()
-    for part in parts:
-        for passage in search(part, top_k=3, mode=mode, collection_id=cid):
-            if passage.chunk_id not in seen:
-                seen.add(passage.chunk_id)
-                merged.append(passage)
-    return merged
+    for rank in range(per_part):
+        for results in lists:
+            if rank < len(results) and results[rank].chunk_id not in seen:
+                seen.add(results[rank].chunk_id)
+                merged.append(results[rank])
+    return merged[:limit]
 
 
 @dataclass
@@ -149,9 +152,11 @@ def answer_question(
     else:
         parts = split_question(question)
         if len(parts) > 1:
-            passages = retrieve_for_parts(parts, top_k, mode, cid)
+            passages = retrieve_for_parts(parts, mode, cid)
         else:
-            passages, balanced = search_balanced(question, top_k=top_k, mode=mode, collection_id=cid)
+            passages, balanced = search_balanced(
+                question, top_k=top_k, mode=mode, collection_id=cid
+            )
     search_seconds = time.perf_counter() - started
 
     llm_started = time.perf_counter()
