@@ -1,21 +1,38 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Text, func
+from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.db import Base
 
 EMBEDDING_DIMENSIONS = 384  # the size of the bge-small embedding model
 
 
-class Document(Base):
-    __tablename__ = "documents"
+class Collection(Base):
+    __tablename__ = "collections"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    file_name: Mapped[str] = mapped_column(unique=True)
+    name: Mapped[str] = mapped_column(unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="collection", cascade="all, delete-orphan"
+    )
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint("collection_id", "file_name", name="uq_documents_collection_file"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    collection_id: Mapped[int | None] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"))
+    collection: Mapped["Collection | None"] = relationship(back_populates="documents")
+    file_name: Mapped[str]
     title: Mapped[str]
-    entity_type: Mapped[str]  # commercial_bank, nbfc, small_finance_bank
+    entity_type: Mapped[str]  # commercial_bank, nbfc, small_finance_bank, or uploaded
     topic: Mapped[str]
     updated_as_on: Mapped[str | None]
     source_url: Mapped[str | None]
@@ -37,6 +54,8 @@ class Chunk(Base):
     token_count: Mapped[int]
     embedding = mapped_column(Vector(EMBEDDING_DIMENSIONS))
     document: Mapped["Document"] = relationship(back_populates="chunks")
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 

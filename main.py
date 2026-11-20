@@ -193,9 +193,11 @@ def transcribe(audio: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Empty recording")
     try:
         result = get_client().audio.transcriptions.create(
-            model=os.environ.get("STT_MODEL", "whisper-large-v3-turbo"),
-            file=(audio.filename or "voice.wav", data, audio.content_type or "audio/wav"),
-            language="en",
+        model=os.environ.get("STT_MODEL", "whisper-large-v3-turbo"),
+        file=(audio.filename or "voice.wav", data, audio.content_type or "audio/wav"),
+        language="en",
+        prompt="RBI, NBFC, KYC, UAPA, SFB, small finance bank, commercial bank, "
+        "loan to value ratio, lending service provider, credit facilities",
         )
     except Exception as error:  # the speech service can be busy, limited or missing the model
         raise HTTPException(status_code=503, detail=f"Speech service unavailable: {error}")
