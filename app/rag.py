@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 
 from openai import APIError
+from app import retrieval
 
 from app.llm import generate
 from app.retrieval import (
@@ -117,9 +118,14 @@ def split_question(question: str) -> list[str]:
     return parts or [question]
 
 
-def retrieve_for_parts(parts: list[str], mode: str, cid: int, per_part: int = 5, limit: int = 12) -> list[Passage]:
-    """Search each part on its own, then merge best-first across parts without repeats."""
-    lists = [search(part, top_k=per_part, mode=mode, collection_id=cid) for part in parts]
+def retrieve_for_parts(parts: list[str], cid: int, per_part: int = 5, limit: int = 10) -> list[Passage]:
+    """Search each part with the reranker over 30 candidates, then merge best-first without repeats."""
+    previous = retrieval.RERANK_POOL
+    retrieval.RERANK_POOL = 30
+    try:
+        lists = [search(part, top_k=per_part, mode="rerank", collection_id=cid) for part in parts]
+    finally:
+        retrieval.RERANK_POOL = previous
     merged, seen = [], set()
     for rank in range(per_part):
         for results in lists:
@@ -152,7 +158,7 @@ def answer_question(
     else:
         parts = split_question(question)
         if len(parts) > 1:
-            passages = retrieve_for_parts(parts, mode, cid)
+          passages = retrieve_for_parts(parts, cid)
         else:
             passages, balanced = search_balanced(
                 question, top_k=top_k, mode=mode, collection_id=cid
