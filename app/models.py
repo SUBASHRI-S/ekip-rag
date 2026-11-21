@@ -10,11 +10,24 @@ from app.db import Base
 EMBEDDING_DIMENSIONS = 384  # the size of the bge-small embedding model
 
 
-class Collection(Base):
-    __tablename__ = "collections"
+class User(Base):
+    __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
+    username: Mapped[str] = mapped_column(unique=True)
+    password_hash: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Collection(Base):
+    __tablename__ = "collections"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_collections_owner_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     documents: Mapped[list["Document"]] = relationship(
         back_populates="collection", cascade="all, delete-orphan"
@@ -60,6 +73,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="Message.id"
