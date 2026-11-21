@@ -11,6 +11,43 @@ services:
       - "5433:5432"
     volumes:
       - ekip_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    image: ekip-rag-app
+    container_name: ekip-api
+    restart: unless-stopped
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - model_cache:/models
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ui:
+    image: ekip-rag-app
+    container_name: ekip-ui
+    restart: unless-stopped
+    command: streamlit run ui/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
 
 volumes:
   ekip_pgdata:
+  model_cache:
