@@ -48,22 +48,27 @@ def entity_and_topic(file_name):
     return ENTITY_TYPES[parts[1]], "_".join(parts[2:])
 
 
-def document_exists(collection_name, file_name):
+def owned_by(owner_id):
+    """Filter for collections of one owner. No owner means a shared collection."""
+    return Collection.owner_id.is_(None) if owner_id is None else Collection.owner_id == owner_id
+
+
+def document_exists(collection_name, file_name, owner_id=None):
     with SessionLocal() as session:
         found = session.scalar(
             select(Document.id)
             .join(Collection, Document.collection_id == Collection.id)
-            .where(Collection.name == collection_name, Document.file_name == file_name)
+            .where(Collection.name == collection_name, owned_by(owner_id), Document.file_name == file_name)
         )
         return found is not None
 
 
 def store_document(
     collection_name, file_name, pages, title=None, entity_type="uploaded",
-    topic="uploaded", updated_as_on=None, source_url=None,
+    topic="uploaded", updated_as_on=None, source_url=None, owner_id=None,
 ):
     """Chunk, embed and save one document. Returns (document_id, chunk_count), or None if it exists."""
-    if document_exists(collection_name, file_name):
+    if document_exists(collection_name, file_name, owner_id):
         return None
     chunks = chunk_pages(pages)
     if not chunks:
@@ -72,9 +77,11 @@ def store_document(
         [c.text for c in chunks], batch_size=32, normalize_embeddings=True, show_progress_bar=False
     )
     with SessionLocal() as session:
-        collection = session.scalar(select(Collection).where(Collection.name == collection_name))
+        collection = session.scalar(
+            select(Collection).where(Collection.name == collection_name, owned_by(owner_id))
+        )
         if collection is None:
-            collection = Collection(name=collection_name)
+            collection = Collection(name=collection_name, owner_id=owner_id)
             session.add(collection)
             session.flush()
         document = Document(
@@ -103,17 +110,23 @@ def store_document(
         return document.id, len(chunks)
 
 
-def ingest_pdf(path, collection_name):
+def ingest_pdf_bytes(data: bytes, file_name: str, collection_name: str, owner_id=None):
+    """Store a PDF that arrived as raw bytes (an upload). Returns (document_id, chunks) or None."""
+    file_name = Path(file_name).name  # never trust a path sent by a browser
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        pages = [(number, clean_page_text(page.get_text())) for number, page in enumerate(doc, start=1)]
+    title = Path(file_name).stem.replace("_", " ").replace("-", " ").strip()
+    return store_document(collection_name, file_name, pages, title=title, owner_id=owner_id)
+
+
+def ingest_pdf(path, collection_name, owner_id=None):
     """Read one PDF file and store it in a collection."""
     path = Path(path)
-    with pymupdf.open(path) as doc:
-        pages = [(number, clean_page_text(page.get_text())) for number, page in enumerate(doc, start=1)]
-    title = path.stem.replace("_", " ").replace("-", " ").strip()
-    return store_document(collection_name, path.name, pages, title=title)
+    return ingest_pdf_bytes(path.read_bytes(), path.name, collection_name, owner_id)
 
 
 def ingest_rbi():
-    """The 21 RBI documents, from the saved page text and SOURCES.md."""
+    """The 21 RBI documents, from the saved page text and SOURCES.md. Shared, so no owner."""
     sources = read_sources()
     for file_name, pages in sorted(read_pages().items()):
         entity_type, topic = entity_and_topic(file_name)
@@ -124,14 +137,6 @@ def ingest_rbi():
             updated_as_on=info.get("updated_as_on"), source_url=info.get("source_url"),
         )
         print(f"skip    {file_name}" if result is None else f"loaded  {file_name}: {result[1]} chunks", flush=True)
-
-def ingest_pdf_bytes(data: bytes, file_name: str, collection_name: str):
-    """Store a PDF that arrived as raw bytes (an upload). Returns (document_id, chunks) or None."""
-    file_name = Path(file_name).name  # never trust a path sent by a browser
-    with pymupdf.open(stream=data, filetype="pdf") as doc:
-        pages = [(number, clean_page_text(page.get_text())) for number, page in enumerate(doc, start=1)]
-    title = Path(file_name).stem.replace("_", " ").replace("-", " ").strip()
-    return store_document(collection_name, file_name, pages, title=title)
 
 
 def main():

@@ -21,14 +21,19 @@ for key, default in {
     "conversation_id": None,
     "last_audio": None,
     "voice_text": "",
+    "token": None,
+    "username": None,
 }.items():
     st.session_state.setdefault(key, default)
 
 
 def api(method, path, timeout=60, **kwargs):
-    """Call the API. Shows an error and returns None if it does not answer."""
+    """Call the API with the login token. Shows an error and returns None if it fails."""
+    headers = {}
+    if st.session_state.token:
+        headers["Authorization"] = f"Bearer {st.session_state.token}"
     try:
-        response = httpx.request(method, f"{API_URL}{path}", timeout=timeout, **kwargs)
+        response = httpx.request(method, f"{API_URL}{path}", timeout=timeout, headers=headers, **kwargs)
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as error:
@@ -36,10 +41,56 @@ def api(method, path, timeout=60, **kwargs):
             detail = error.response.json().get("detail", error)
         except ValueError:
             detail = error
+        if error.response.status_code == 401 and st.session_state.token:
+            st.session_state.token = None  # the login expired: the next click shows the login screen
+            st.session_state.username = None
         st.error(f"The API said: {detail}")
     except httpx.HTTPError as error:
         st.error(f"The API did not answer: {error}")
     return None
+
+
+def login_screen():
+    st.title("📚 Ask your documents")
+    st.caption(
+        "Log in to use your own collections and chats. "
+        "The RBI Master Directions collection is shared with everyone."
+    )
+    login_tab, register_tab = st.tabs(["Log in", "Create account"])
+    with login_tab:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Log in")
+        if submitted:
+            result = api("POST", "/auth/login", json={"username": username, "password": password})
+            if result:
+                st.session_state.token = result["token"]
+                st.session_state.username = result["username"]
+                st.rerun()
+    with register_tab:
+        with st.form("register_form"):
+            new_username = st.text_input("Choose a username (letters, digits, underscore)")
+            new_password = st.text_input("Choose a password (at least 8 characters)", type="password")
+            created = st.form_submit_button("Create account")
+        if created:
+            result = api("POST", "/auth/register", json={"username": new_username, "password": new_password})
+            if result:
+                st.session_state.token = result["token"]
+                st.session_state.username = result["username"]
+                st.rerun()
+
+
+if not st.session_state.token:
+    login_screen()
+    st.stop()
+
+
+def log_out():
+    for key in ("token", "username", "conversation_id", "last_audio"):
+        st.session_state[key] = None
+    st.session_state.messages = []
+    st.session_state.voice_text = ""
 
 
 def new_chat():
@@ -88,6 +139,8 @@ by_name = {c["name"]: c for c in collections}
 
 with st.sidebar:
     st.title("📚 Ask your documents")
+    st.caption(f"Signed in as **{st.session_state.username}**")
+    st.button("Log out", on_click=log_out, use_container_width=True)
     st.button("➕ New chat", on_click=new_chat, use_container_width=True)
 
     st.subheader("Collection")
@@ -96,7 +149,9 @@ with st.sidebar:
     names = [c["name"] for c in collections]
     if names and st.session_state.get("collection_name") not in names:
         st.session_state["collection_name"] = names[0]
-    selected_name = st.selectbox("Ask about", names, key="collection_name", label_visibility="collapsed") if names else None
+    selected_name = (
+        st.selectbox("Ask about", names, key="collection_name", label_visibility="collapsed") if names else None
+    )
     selected = by_name.get(selected_name)
     if selected:
         with st.expander(f"📄 Documents ({len(selected['documents'])})"):

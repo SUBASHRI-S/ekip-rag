@@ -4,6 +4,9 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _hasher = PasswordHasher()
 SECRET = os.environ.get("JWT_SECRET", "")

@@ -81,12 +81,15 @@ def embed_query(question: str) -> list[float]:
 
 
 def resolve_collection(collection_id):
-    """No collection given means the RBI collection."""
+    """No collection given means the shared RBI collection."""
     if collection_id is not None:
         return collection_id
     with SessionLocal() as session:
-        return session.scalar(select(Collection.id).where(Collection.name == DEFAULT_COLLECTION))
-
+        return session.scalar(
+            select(Collection.id).where(
+                Collection.name == DEFAULT_COLLECTION, Collection.owner_id.is_(None)
+            )
+        )
 
 def get_collection_name(collection_id):
     with SessionLocal() as session:
