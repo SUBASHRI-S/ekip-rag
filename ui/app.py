@@ -233,14 +233,18 @@ if selected:
         f"Asking inside the collection **{selected['name']}**. "
         "Every answer cites the document and page."
     )
-
-if not st.session_state.messages and selected and selected["read_only"]:
+if not collections:
+    st.info(
+        "You have no documents yet. Open ⬆️ Add your own PDFs in the sidebar, "
+        "upload one or more text PDFs, then ask questions about them."
+    )
+elif not st.session_state.messages and selected and selected["read_only"]:
     st.markdown("#### Try one of these")
     for number, text in enumerate(RBI_EXAMPLES):
         st.button(text, key=f"example{number}", on_click=ask_example, args=(text,))
 elif not st.session_state.messages:
     st.info("Ask a question about the documents in this collection.")
-
+    
 for index, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
