@@ -1,7 +1,7 @@
 import os
 import uuid
 
-os.environ["JWT_SECRET"] = "a-secret-used-only-in-tests"  # must be set before main is imported
+os.environ["JWT_SECRET"] = "a-test-only-secret-that-is-longer-than-32-bytes"
 
 import pymupdf
 import pytest

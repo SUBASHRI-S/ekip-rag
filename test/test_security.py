@@ -1,6 +1,6 @@
 import os
 
-os.environ["JWT_SECRET"] = "a-secret-used-only-in-tests"
+os.environ["JWT_SECRET"] = "a-test-only-secret-that-is-longer-than-32-bytes"
 
 import importlib
 
