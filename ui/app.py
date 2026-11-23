@@ -1,9 +1,10 @@
 import hashlib
+import os
 
 import httpx
 import streamlit as st
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000")
 RBI_EXAMPLES = [
     "What is the maximum loan to value ratio for gold loans given by NBFCs?",
     "What is a lending service provider?",
