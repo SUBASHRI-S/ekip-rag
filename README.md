@@ -76,10 +76,9 @@ All numbers below were measured on this collection. Nothing here is estimated.
 
 **Answers** (full pipeline with the LLM)
 
-- 15 of 15 unanswerable questions were correctly refused, and 2 of 42 answerable questions were wrongly refused. This run used reranked retrieval.
-- > Answerable questions wrongly refused: 3 of 44
-    Answers that include a citation: 41 of 41
-    Answers that cite a passage from the correct place: 39 of 41
+- Full pipeline with the hybrid default (the shipped setting): 15 of 15 unanswerable questions were correctly refused, and 3 of 44 answerable questions were wrongly refused (c23, c26 and c36). All 41 answers that were given included a citation, and 39 of 41 cited a passage from the correct place.
+- An earlier run with reranked retrieval gave 15 of 15 refusals and 2 of 42 wrong refusals.
+- "Cites the correct place" means the cited passage comes from the expected document and pages. It does not prove the wording of the answer is right.
 
 **Known failures.** Several misses are rule sentences inside long chunks, or the same definition repeated in many documents (for example the definition of "commercial banks" appears in at least 10 chunks), so the document named in the question cannot be told apart from copies.
 
