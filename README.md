@@ -81,6 +81,7 @@ All numbers below were measured on this collection. Nothing here is estimated.
 - "Cites the correct place" means the cited passage comes from the expected document and pages. It does not prove the wording of the answer is right.
 
 **Known failures.** Several misses are rule sentences inside long chunks, or the same definition repeated in many documents (for example the definition of "commercial banks" appears in at least 10 chunks), so the document named in the question cannot be told apart from copies.
+All three wrongly refused questions (c23, c26 and c36) were retrieval misses: the chunk the question was written from was not among the five passages sent to the model, so the system declined to answer from what it saw.
 
 ## Design decisions
 
